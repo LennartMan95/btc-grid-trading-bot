@@ -1,0 +1,6 @@
+models/*.pkl
+state.json
+*.log
+__pycache__/
+.env
+.DS_Store
