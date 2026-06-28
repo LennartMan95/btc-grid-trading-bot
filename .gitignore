@@ -1,5 +1,6 @@
 models/*.pkl
 state.json
+paper_state.json
 *.log
 __pycache__/
 .env
