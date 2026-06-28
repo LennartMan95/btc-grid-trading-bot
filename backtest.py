@@ -26,205 +26,14 @@ import pandas as pd
 import config
 import sma_filter
 import ml_spacing
+import grid_logic
 
 
 START_CAPITAL = 10000.0   # Startkapital in USDT fuer die Simulation
 
-
-def build_grid_levels(lower, upper, spacing):
-    """
-    Erzeugt geometrisch gestaffelte Grid-Level von 'lower' aufwaerts.
-
-    Input:  lower (Untergrenze), upper (Obergrenze), spacing (z.B. 0.005)
-    Output: Liste der Grid-Preise.
-
-    Geometrisch (jeder Level = vorheriger * (1+spacing)), weil das Spacing
-    ein Prozentwert ist — so liefert jeder Round-Trip denselben %-Profit.
-    Gedeckelt durch MAX_GRID_COUNT.
-    """
-    levels = []
-    p = lower
-    while p <= upper and len(levels) < config.MAX_GRID_COUNT:
-        levels.append(p)
-        p *= (1 + spacing)
-    return levels
-
-
-def open_grid(state, close, sma, spacing):
-    """
-    Baut ein frisches Grid am aktuellen Preis und setzt die Startorders.
-
-    Input:  state (dict, wird veraendert), close, sma, spacing
-    Output: nichts (state wird in-place aktualisiert).
-
-    Seeding gemaess Vorgabe:
-      - Buy-Orders auf allen Leveln UNTER dem Close (Dips kaufen).
-      - Sell-Orders auf allen Leveln UEBER dem Close — dafuer kaufen wir
-        eine Anfangs-Position zum Close (sonst gaebe es nichts zu
-        verkaufen). Das macht den Bot bewusst long-orientiert.
-    """
-    lower = sma * config.LOWER_PRICE_SMA_FACTOR     # SMA * 0.99
-    upper = close * config.UPPER_PRICE_FACTOR       # close * 10 (theoret. Limit)
-    levels = build_grid_levels(lower, upper, spacing)
-
-    state["levels"] = levels
-    state["spacing"] = spacing
-    state["start_price"] = close
-    state["buy_orders"] = {}     # level_index -> price
-    state["sell_orders"] = {}    # level_index -> {price, qty, cost}
-
-    invested = state["capital"] * config.CAPITAL_INVESTED
-    n_levels = max(len(levels), 1)
-    per_level = invested / n_levels   # gleicher Quote-Betrag pro Level
-
-    for idx, price in enumerate(levels):
-        if price < close:
-            # Buy-Order: Cash bleibt liegen, wird erst beim Fill ausgegeben.
-            state["buy_orders"][idx] = price
-        elif price > close:
-            # Sell-Order: Anfangs-Inventar jetzt zum Close kaufen.
-            if state["cash"] >= per_level:
-                qty = per_level / close
-                fee = per_level * config.MAKER_FEE
-                state["cash"] -= (per_level + fee)
-                state["btc"] += qty
-                state["fees"] += fee
-                state["sell_orders"][idx] = {
-                    "price": price,
-                    "qty": qty,
-                    "cost": per_level + fee,   # Einstandskosten inkl. Gebuehr
-                }
-
-    state["per_level"] = per_level
-    state["active"] = True
-
-
-def close_grid(state, close):
-    """
-    Loest das Grid auf: alle Orders canceln, gesamtes BTC zum Close
-    verkaufen (Taker-Gebuehr). Wird bei Exit, Stop-Loss und Rebuild genutzt.
-
-    Input:  state (dict, wird veraendert), close
-    Output: nichts.
-    """
-    if state["btc"] > 0:
-        revenue = state["btc"] * close
-        fee = revenue * config.TAKER_FEE
-        state["cash"] += (revenue - fee)
-        state["fees"] += fee
-        state["btc"] = 0.0
-    state["buy_orders"] = {}
-    state["sell_orders"] = {}
-    state["active"] = False
-
-
-def rebuild_grid(state, close, sma, new_spacing):
-    """
-    Setzt das Grid auf ein neues Spacing um, OHNE das Inventar zu verkaufen.
-
-    Input:  state (dict, wird veraendert), close, sma, new_spacing
-    Output: nichts.
-
-    WARUM kein Liquidieren: Ein Rebuild ist in der Praxis nur das Canceln
-    und Neu-Platzieren von Limit-Orders — das kostet KEINE Gebuehren
-    (Gebuehren fallen nur bei echten Fills an). Das gehaltene BTC-Inventar
-    inkl. seiner Kostenbasis bleibt erhalten und wird gleichmaessig auf die
-    neuen oberen Sell-Level verteilt. So entstehen beim Rebuild weder
-    kuenstliche Liquidations-Gebuehren noch verloren gegangene Grid-Profite
-    (das war der Fehler einer Voll-Liquidation pro Rebuild).
-    """
-    btc_total = state["btc"]
-    cost_total = sum(o["cost"] for o in state["sell_orders"].values())
-
-    lower = sma * config.LOWER_PRICE_SMA_FACTOR
-    upper = close * config.UPPER_PRICE_FACTOR
-    levels = build_grid_levels(lower, upper, new_spacing)
-
-    state["levels"] = levels
-    state["spacing"] = new_spacing
-    state["buy_orders"] = {}
-    state["sell_orders"] = {}
-
-    invested = state["capital"] * config.CAPITAL_INVESTED
-    n_levels = max(len(levels), 1)
-    state["per_level"] = invested / n_levels
-
-    lower_idx = [idx for idx, p in enumerate(levels) if p < close]
-    upper_idx = [idx for idx, p in enumerate(levels) if p > close]
-
-    # Buy-Orders unter dem Preis (Cash-gedeckt, fuellen erst spaeter).
-    for idx in lower_idx:
-        state["buy_orders"][idx] = levels[idx]
-
-    # Bestehendes Inventar gleichmaessig auf die oberen Sell-Level verteilen.
-    # Kostenbasis bleibt in Summe erhalten -> keine kuenstliche P&L.
-    if btc_total > 0 and upper_idx:
-        qty_each = btc_total / len(upper_idx)
-        cost_each = cost_total / len(upper_idx)
-        for idx in upper_idx:
-            state["sell_orders"][idx] = {
-                "price": levels[idx],
-                "qty": qty_each,
-                "cost": cost_each,
-            }
-    # state["btc"] und state["cash"] bleiben unveraendert (keine Fills).
-
-
-def process_fills(state, low, high):
-    """
-    Simuliert die Order-Fills eines Tages auf Basis von Low/High.
-
-    Input:  state (dict), low, high der Tageskerze
-    Output: nichts (state wird in-place aktualisiert).
-
-    Reihenfolge "erst Low, dann High": zuerst fuellen alle erreichten
-    Buy-Orders (Preis dropt bis 'low'), danach alle erreichten Sell-Orders
-    (Preis steigt bis 'high'). Eine in der Low-Phase frisch gesetzte
-    Sell-Order kann so noch am selben Tag fuellen (volatiler Round-Trip).
-    """
-    levels = state["levels"]
-    per_level = state["per_level"]
-
-    # --- Phase 1: Low -> Buy-Orders mit price >= low fuellen (oben zuerst).
-    hit_buys = [idx for idx, price in state["buy_orders"].items() if low <= price]
-    for idx in sorted(hit_buys, key=lambda k: state["buy_orders"][k], reverse=True):
-        price = state["buy_orders"][idx]
-        cost = per_level
-        if state["cash"] < cost:
-            continue   # nicht genug Cash -> Order kann nicht fuellen
-        qty = cost / price
-        fee = cost * config.MAKER_FEE
-        state["cash"] -= (cost + fee)
-        state["btc"] += qty
-        state["fees"] += fee
-        del state["buy_orders"][idx]
-        # Gegenorder: Sell eine Stufe hoeher (klassische Grid-Mechanik).
-        up = idx + 1
-        if up < len(levels):
-            state["sell_orders"][up] = {
-                "price": levels[up],
-                "qty": qty,
-                "cost": cost + fee,
-            }
-
-    # --- Phase 2: High -> Sell-Orders mit price <= high fuellen (unten zuerst).
-    hit_sells = [idx for idx, o in state["sell_orders"].items() if high >= o["price"]]
-    for idx in sorted(hit_sells, key=lambda k: state["sell_orders"][k]["price"]):
-        order = state["sell_orders"][idx]
-        revenue = order["qty"] * order["price"]
-        fee = revenue * config.TAKER_FEE
-        proceeds = revenue - fee
-        state["cash"] += proceeds
-        state["btc"] -= order["qty"]
-        state["fees"] += fee
-        # Realisierter Grid-Profit dieses Round-Trips (nach Gebuehren).
-        state["realized"] += (proceeds - order["cost"])
-        state["trades"] += 1
-        del state["sell_orders"][idx]
-        # Gegenorder: Buy eine Stufe tiefer wieder scharf schalten.
-        down = idx - 1
-        if down >= 0:
-            state["buy_orders"][down] = levels[down]
+# Die gesamte Grid-Mechanik (Level, Orders, Fills, Rebuild) lebt jetzt in
+# grid_logic.py und wird sowohl vom Backtest als auch spaeter vom Live-Bot
+# genutzt. So gibt es nur EINE Quelle der Wahrheit fuer die Grid-Logik.
 
 
 def annualize(value, num_days):
@@ -245,21 +54,7 @@ def run_backtest(df, mode="static", model=None, feature_df=None):
     Ablauf pro Tag: erst Fills (falls aktiv), dann SMA-Signal am Close
     auswerten (Entry/Exit/Stop), bei ML zusaetzlich taeglicher Rebuild-Check.
     """
-    state = {
-        "capital": START_CAPITAL,
-        "cash": START_CAPITAL,
-        "btc": 0.0,
-        "fees": 0.0,
-        "realized": 0.0,
-        "trades": 0,
-        "active": False,
-        "levels": [],
-        "buy_orders": {},
-        "sell_orders": {},
-        "per_level": 0.0,
-        "spacing": config.GRID_SPACING_PCT,
-        "start_price": 0.0,
-    }
+    state = grid_logic.new_state(START_CAPITAL)
 
     stop_events = 0
     rebuilds = 0
@@ -276,7 +71,7 @@ def run_backtest(df, mode="static", model=None, feature_df=None):
 
         # 1) Falls aktiv: Tages-Fills abarbeiten.
         if state["active"]:
-            process_fills(state, low, high)
+            grid_logic.simulate_day_fills(state, low, high)
             days_active += 1
 
         # 2) ML-Rebuild-Check (nur wenn aktiv und Modell vorhanden).
@@ -286,7 +81,7 @@ def run_backtest(df, mode="static", model=None, feature_df=None):
                 new_spacing = ml_spacing.predict_spacing(model, feats)
                 if ml_spacing.should_rebuild(state["spacing"], new_spacing) \
                         and not pd.isna(sma):
-                    rebuild_grid(state, close, sma, new_spacing)
+                    grid_logic.rebuild_grid(state, close, sma, new_spacing)
                     rebuilds += 1
 
         # 3) SMA-Signal am Tagesschluss auswerten.
@@ -294,7 +89,7 @@ def run_backtest(df, mode="static", model=None, feature_df=None):
 
         if state["active"] and not status["active"]:
             # Exit oder Stop-Loss -> Grid aufloesen.
-            close_grid(state, close)
+            grid_logic.close_grid(state, close)
             if status["stop_loss_hit"]:
                 stop_events += 1
         elif (not state["active"]) and status["active"]:
@@ -308,10 +103,10 @@ def run_backtest(df, mode="static", model=None, feature_df=None):
             else:
                 spacing = config.GRID_SPACING_PCT
             if not pd.isna(sma):
-                open_grid(state, close, sma, spacing)
+                grid_logic.open_grid(state, close, sma, spacing)
 
         # 4) Equity am Tagesende (Cash + Inventarwert).
-        equity = state["cash"] + state["btc"] * close
+        equity = grid_logic.grid_equity(state, close)
         equity_curve.append(equity)
         dates.append(df.index[i])
 
