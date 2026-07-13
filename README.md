@@ -31,6 +31,27 @@ python sma_filter.py    # SMA + Entry/Exit/Stop testen
 python ml_spacing.py    # Modell trainieren + Vorhersage
 python backtest.py      # Vollständiger Backtest-Vergleich
 python paper_trade.py   # Paper-Trading-Trockenlauf (Spot, kein Hebel)
+python monitor.py       # Täglicher Live-Loop (Alpaca Paper, ein Durchlauf)
+```
+
+## Live-Betrieb (Cronjob)
+
+Der Bot wird **einmal täglich** nach UTC-Tagesabschluss per Cronjob gestartet:
+
+```bash
+python monitor.py
+```
+
+Manueller Test (Duplikat-Schutz überspringen): `python monitor.py --force`
+
+**Hinweis:** Der tägliche Cronjob erfordert, dass der Mac zum Ausführungszeitpunkt
+nicht im Schlafmodus ist (Energieeinstellungen anpassen oder Mac angeschlossen lassen).
+
+Beispiel-Cron (00:05 UTC):
+
+```cron
+CRON_TZ=UTC
+5 0 * * * cd /Users/lennartmanske/Desktop/grid_bot_btc && /Users/lennartmanske/Desktop/grid_bot_btc/.venv/bin/python monitor.py >> /Users/lennartmanske/Desktop/grid_bot_btc/cron_monitor.log 2>&1
 ```
 
 ## Module
@@ -44,6 +65,8 @@ python paper_trade.py   # Paper-Trading-Trockenlauf (Spot, kein Hebel)
 | `grid_logic.py` | Grid-Mechanik: Level, Orders, Fill-Handling, Rebuild (Backtest + Live). |
 | `backtest.py` | Historische Simulation mit OHLC-Fill-Logik: statisch vs. ML vs. Buy&Hold. |
 | `paper_trade.py` | Täglicher Trockenlauf im Paper-Modus (Spot, kein Hebel). |
+| `execution.py` | Minimalistische Alpaca-Order-Anbindung (`place_order`, `cancel_order`). |
+| `monitor.py` | Tägliche Orchestrierung: SMA, ML, Grid, Fills, `state.json` (Cronjob). |
 
 ## Gebühren & Spacing
 

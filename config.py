@@ -5,11 +5,11 @@ Hier stehen ALLE Parameter und Konstanten an einem Ort. Jede andere
 Datei importiert ihre Einstellungen aus diesem Modul. So gibt es nur
 eine einzige Quelle der Wahrheit fuer die Strategie.
 
-Das Logging-Setup (Standard-Library logging mit File + Console) wird
-erst ab Schritt 9 (Live-Betrieb) hier ergaenzt. Bis dahin nutzen die
-Backtest-Module einfaches print().
+Das Logging-Setup (Standard-Library logging mit File + Console) liegt
+ab Schritt 9 ebenfalls hier — ein Aufruf von setup_logging() genuegt.
 """
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -157,6 +157,31 @@ IN_SAMPLE_START = "2021-01-01"   # Trainings-/In-Sample-Periode (3 Jahre)
 IN_SAMPLE_END = "2023-12-31"
 OUT_SAMPLE_START = "2024-01-01"  # Out-of-Sample — der entscheidende Vergleich
 OUT_SAMPLE_END = "2026-07-13"    # bis zum aktuell letzten verfuegbaren Tag
+
+
+# ---------------------------------------------------------------------------
+# LOGGING (Live-Betrieb, Schritt 9)
+# ---------------------------------------------------------------------------
+
+def setup_logging(name="grid_bot"):
+    """
+    Richtet Logging auf Datei (LOG_PATH) und Konsole ein.
+
+    Input:  name (Logger-Name)
+    Output: konfigurierter Logger.
+    """
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    fh = logging.FileHandler(LOG_PATH)
+    fh.setFormatter(fmt)
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    logger.addHandler(fh)
+    logger.addHandler(sh)
+    return logger
 
 
 # ---------------------------------------------------------------------------

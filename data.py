@@ -20,7 +20,7 @@ Schreiben der state.json.
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 from alpaca.data.historical import CryptoHistoricalDataClient
@@ -112,13 +112,105 @@ def load_data(force_refresh=False):
 
 
 # ---------------------------------------------------------------------------
-# STATE MANAGEMENT (nur Live-Betrieb, Schritt 9) — hier nur die Helfer.
+# STATE MANAGEMENT (Live-Betrieb, Schritt 9)
 # ---------------------------------------------------------------------------
+
+def empty_state_snapshot():
+    """
+    Leerer Laufzustand fuer den allerersten Start oder nach Reset.
+
+    Output: dict im state.json-Schema (restart-sicher).
+    """
+    return {
+        "grid_active": False,
+        "sma_status": "PAUSE",
+        "grid_start_price": 0.0,
+        "current_spacing": config.GRID_SPACING_PCT,
+        "last_run_at": None,
+        "last_bar_date": None,
+        "capital": 0.0,
+        "levels": [],
+        "per_level": 0.0,
+        "buy_orders": {},
+        "sell_orders": {},
+        "trades": 0,
+        "realized": 0.0,
+        "fees": 0.0,
+    }
+
+
+def _orders_to_json(orders):
+    """Wandelt Order-Buecher (int-Keys) in JSON-taugliche str-Keys um."""
+    out = {}
+    for idx, order in orders.items():
+        entry = dict(order)
+        out[str(idx)] = entry
+    return out
+
+
+def _orders_from_json(orders):
+    """Laedt Order-Buecher aus state.json zurueck (int-Keys)."""
+    out = {}
+    for idx, order in orders.items():
+        out[int(idx)] = dict(order)
+    return out
+
+
+def snapshot_from_grid(grid_state, sma_status, last_bar_date=None):
+    """
+    Baut das state.json-Snapshot aus dem grid_logic-Zustand.
+
+    Input:  grid_state (dict), sma_status ('LONG'/'PAUSE'), last_bar_date
+    Output: dict zum Speichern in state.json.
+    """
+    return {
+        "grid_active": grid_state["active"],
+        "sma_status": sma_status,
+        "grid_start_price": grid_state["start_price"],
+        "current_spacing": grid_state["spacing"],
+        "last_run_at": datetime.now(timezone.utc).isoformat(),
+        "last_bar_date": str(last_bar_date) if last_bar_date else None,
+        "capital": grid_state["capital"],
+        "levels": grid_state["levels"],
+        "per_level": grid_state["per_level"],
+        "buy_orders": _orders_to_json(grid_state["buy_orders"]),
+        "sell_orders": _orders_to_json(grid_state["sell_orders"]),
+        "trades": grid_state["trades"],
+        "realized": grid_state["realized"],
+        "fees": grid_state["fees"],
+    }
+
+
+def grid_state_from_snapshot(snap, cash=None, btc=None):
+    """
+    Stellt den grid_logic-Zustand aus state.json wieder her.
+
+    Input:  snap (dict aus load_state), optional cash/btc von Alpaca
+    Output: grid_state-dict fuer grid_logic/monitor.
+    """
+    state = {
+        "capital": snap.get("capital", 0.0),
+        "cash": cash if cash is not None else snap.get("capital", 0.0),
+        "btc": btc if btc is not None else 0.0,
+        "fees": snap.get("fees", 0.0),
+        "realized": snap.get("realized", 0.0),
+        "trades": snap.get("trades", 0),
+        "active": snap.get("grid_active", False),
+        "levels": snap.get("levels", []),
+        "buy_orders": _orders_from_json(snap.get("buy_orders", {})),
+        "sell_orders": _orders_from_json(snap.get("sell_orders", {})),
+        "per_level": snap.get("per_level", 0.0),
+        "spacing": snap.get("current_spacing", config.GRID_SPACING_PCT),
+        "start_price": snap.get("grid_start_price", 0.0),
+    }
+    return state
+
 
 def load_state():
     """
-    Liest die state.json (Laufzustand) als dict. Gibt None zurueck,
-    wenn noch keine Datei existiert (z.B. allererster Start).
+    Liest state.json. Gibt None zurueck, wenn noch keine Datei existiert.
+
+    Output: dict im state.json-Schema oder None.
     """
     if not os.path.exists(config.STATE_PATH):
         return None
@@ -126,14 +218,16 @@ def load_state():
         return json.load(f)
 
 
-def save_state(state):
+def save_state(snapshot):
     """
-    Schreibt den Laufzustand (dict) sofort in state.json.
-    Wird live nach jedem Fill/Rebuild aufgerufen, um Doppelorders
-    nach einem Neustart zu verhindern.
+    Schreibt den Laufzustand sofort in state.json (restart-sicher).
+
+    Input:  snapshot-dict (siehe snapshot_from_grid)
+    Output: nichts.
     """
+    snapshot["last_run_at"] = datetime.now(timezone.utc).isoformat()
     with open(config.STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
+        json.dump(snapshot, f, indent=2)
 
 
 if __name__ == "__main__":
