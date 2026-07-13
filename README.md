@@ -101,6 +101,43 @@ weniger Gebühren und weniger Trades.
 
 ![Equity-Kurve](equity_curve.png)
 
+## Projektstatus: Abgeschlossen
+
+Dieses Repository ist der **finale Stand nach Schritt 9** (Schritte 1–9 vollständig).
+Optionale Erweiterungen (Steuer-Tracking, monatliches Retraining, Confirmation-Backtest)
+wurden bewusst nicht umgesetzt.
+
+### Was umgesetzt wurde
+
+- **Backtest-Kern** (`backtest.py`): Historische Simulation mit OHLC-Fill-Logik,
+  Vergleich **Statisch vs. ML vs. Buy&Hold**, getrennte Auswertung **In-Sample
+  (2021–2023)** und **Out-of-Sample (2024–2026)** inkl. Equity-Kurve und Metriken
+  (CAGR, Sharpe, Drawdown, Gebühren, Trades).
+- **SMA-Risikofilter** (`sma_filter.py`): 120-Tage-SMA mit Entry/Exit-Confirmation
+  und dynamischem Stop-Loss — Long-Grid oder Pause, kein Short.
+- **ML-adaptives Spacing** (`ml_spacing.py`): Decision Tree Regressor sagt das
+  Grid-Spacing täglich in % voraus (Features nur aus der Vergangenheit, sauberer
+  Train/Test-Split, `.pkl`-Modell).
+- **Grid-Mechanik** (`grid_logic.py`): Wiederverwendbare Level-, Order- und
+  Fill-Logik für Backtest und Live.
+- **Alpaca Spot-Paper-Trading** (`execution.py`, `monitor.py`): Order-Anbindung
+  und täglicher Ein-Durchlauf-Orchestrator im **Paper-Modus** (Spot-only, kein Hebel),
+  restart-sicher über `state.json`.
+- **Automatisierter Live-Loop**: `monitor.py` als Cronjob einmal täglich nach
+  UTC-Tagesabschluss (siehe Abschnitt Live-Betrieb).
+
+### Bewusste Planänderung (Prof-Vorgabe)
+
+Ursprünglich war **Binance/ccxt** mit optional **Futures/Hebel (max. 3×)** vorgesehen.
+Auf Prof-Anweisung wurde das Projekt umgestellt auf:
+
+1. **Alpaca + alpaca-py** statt Binance/CCXT (Daten, Paper-Trading, Ausführung).
+2. **Spot-only, kein Hebel** — Futures und `risk.py` entfallen ersatzlos.
+
+Historische Binance-Daten liegen nur noch lokal als Backup vor
+(`data/btc_usdt_1d_binance_backup.csv`, nicht im Repo). Reproduzierbare
+Backtests nutzen den committed Alpaca-Cache `data/btc_usd_1d.csv`.
+
 ## Disclaimer
 
 Dieses Projekt dient ausschließlich Forschungs- und Ausbildungszwecken und ist
