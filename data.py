@@ -1,96 +1,105 @@
 """
-data.py — Laedt historische BTC/USDT OHLCV-Tagesdaten (UTC-Schluss).
+data.py — Laedt historische BTC/USD OHLCV-Tagesdaten von Alpaca.
 
-Hauptaufgabe (Schritt 2): Tageskerzen ab 2017 ueber ccxt von Binance
-holen, lokal als CSV cachen und als pandas DataFrame zurueckgeben.
-Der Cache sorgt dafuer, dass Backtests reproduzierbar sind und nicht
-bei jedem Lauf erneut die API belasten.
+Hauptaufgabe: Tageskerzen ab dem fruehesten Alpaca-Datum (2021-01-01) ueber
+alpaca-py (CryptoHistoricalDataClient) holen, lokal als CSV cachen und als
+pandas DataFrame zurueckgeben. Der Cache macht Backtests reproduzierbar und
+schont die API.
+
+WICHTIG — Struktur & Timezone:
+  - Alpaca liefert einen MultiIndex (symbol, timestamp) mit tz-AWARE
+    UTC-Zeitstempeln. Wir flachen den DataFrame ab (reset_index), behalten
+    nur open/high/low/close/volume und wandeln den Zeitstempel projektweit
+    einheitlich in ein tz-NAIVE Tagesdatum um (.tz_localize(None)).
+  - Damit hat der DataFrame exakt dieselbe flache, tz-naive Struktur wie
+    frueher unter ccxt — der Rest der Architektur bleibt unveraendert.
 
 Zusaetzlich (fuer Schritt 9, Live-Betrieb): kleine Helfer zum Lesen und
-Schreiben der state.json. Im Backtest werden diese nicht gebraucht.
+Schreiben der state.json.
 """
 
 import os
 import json
-import time
+from datetime import datetime
 
 import pandas as pd
-import ccxt
+from alpaca.data.historical import CryptoHistoricalDataClient
+from alpaca.data.requests import CryptoBarsRequest
+from alpaca.data.timeframe import TimeFrame
 
 import config
 
 
-# Lokaler Cache fuer die heruntergeladenen Tagesdaten.
-CACHE_PATH = "data/btc_usdt_1d.csv"
-
-# Ein Tag in Millisekunden — ccxt arbeitet mit ms-Zeitstempeln.
-ONE_DAY_MS = 24 * 60 * 60 * 1000
+# Lokaler Cache fuer die heruntergeladenen Alpaca-Tagesdaten.
+CACHE_PATH = "data/btc_usd_1d.csv"
 
 
-def fetch_ohlcv_all(symbol=config.SYMBOL, timeframe=config.TIMEFRAME,
-                    start=config.DATA_START):
+def _get_client():
     """
-    Holt ALLE Tageskerzen ab 'start' von Binance via ccxt.
+    Erzeugt den Alpaca-Krypto-Datenclient.
 
-    Input:  symbol (z.B. "BTC/USDT"), timeframe ("1d"), start ("2017-01-01")
+    Fuer historische Krypto-Daten sind keine Keys zwingend noetig; wenn sie
+    in .env vorhanden sind, nutzen wir sie (hoehere Rate-Limits).
+    """
+    if config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY:
+        return CryptoHistoricalDataClient(config.ALPACA_API_KEY,
+                                          config.ALPACA_SECRET_KEY)
+    return CryptoHistoricalDataClient()
+
+
+def fetch_ohlcv_all(symbol=config.SYMBOL, start=config.DATA_START):
+    """
+    Holt ALLE Tageskerzen ab 'start' fuer 'symbol' von Alpaca.
+
+    Input:  symbol (z.B. "BTC/USD"), start ("2021-01-01")
     Output: pandas DataFrame mit Spalten open/high/low/close/volume,
-            DatetimeIndex (UTC-Tag).
+            tz-naivem DatetimeIndex (UTC-Tag).
 
-    Binance liefert pro Anfrage max. ~1000 Kerzen, daher paginieren wir
-    mit dem 'since'-Zeitstempel, bis keine neuen Kerzen mehr kommen.
+    alpaca-py paginiert intern automatisch — wir bekommen die volle Historie
+    in einem Aufruf zurueck und muessen nur noch umformatieren.
     """
-    exchange = ccxt.binance()
-    since = exchange.parse8601(start + "T00:00:00Z")
-    limit = 1000
+    client = _get_client()
+    req = CryptoBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=TimeFrame.Day,
+        start=datetime.fromisoformat(start),
+    )
+    bars = client.get_crypto_bars(req)
 
-    all_rows = []
-    while True:
-        batch = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
-        if not batch:
-            break
-        all_rows += batch
-        print(f"  ... {len(batch)} Kerzen geladen (gesamt {len(all_rows)})")
+    # Alpaca-DataFrame: MultiIndex (symbol, timestamp) -> flach machen.
+    df = bars.df.reset_index()
+    df.columns = [c.lower() for c in df.columns]
 
-        # Naechster Start = letzte Kerze + 1 Tag, sonst Endlosschleife.
-        since = batch[-1][0] + ONE_DAY_MS
+    # Nur die klassischen OHLCV-Spalten behalten (wie frueher unter ccxt).
+    df = df[["timestamp", "open", "high", "low", "close", "volume"]]
 
-        # Weniger als 'limit' Kerzen => wir sind am aktuellen Rand angekommen.
-        if len(batch) < limit:
-            break
-
-        # ccxt-Ratelimit respektieren (freundlich zur API bleiben).
-        time.sleep(exchange.rateLimit / 1000)
-
-    df = pd.DataFrame(all_rows,
-                      columns=["timestamp", "open", "high", "low", "close", "volume"])
-
-    # ms-Zeitstempel (UTC) in ein Tagesdatum umwandeln und als Index setzen.
-    df["date"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df["date"] = df["date"].dt.tz_localize(None).dt.normalize()
+    # Zeitstempel ist tz-AWARE (UTC) -> projektweit einheitlich tz-NAIVE
+    # Tagesdatum. Sonst crasht Pandas bei Vergleichen mit naiven Datums.
+    df["date"] = pd.to_datetime(df["timestamp"], utc=True) \
+        .dt.tz_localize(None).dt.normalize()
     df = df.drop(columns=["timestamp"]).set_index("date")
 
-    # Sicherheitshalber Duplikate entfernen und sortieren.
+    # Duplikate entfernen und sortieren.
     df = df[~df.index.duplicated(keep="first")].sort_index()
     return df
 
 
 def load_data(force_refresh=False):
     """
-    Liefert die BTC-Tagesdaten als DataFrame — aus dem Cache oder frisch.
+    Liefert die BTC/USD-Tagesdaten als DataFrame — aus dem Cache oder frisch.
 
     Input:  force_refresh=True erzwingt einen Neu-Download trotz Cache.
-    Output: DataFrame open/high/low/close/volume mit UTC-Tagesindex,
+    Output: DataFrame open/high/low/close/volume mit tz-naivem Tagesindex,
             OHNE die heutige (noch unfertige) Kerze.
 
-    Die laufende Kerze des aktuellen UTC-Tages ist noch nicht
-    abgeschlossen. Wir entfernen sie, damit kein Look-ahead durch
-    halbfertige Daten entsteht.
+    Die laufende Kerze des aktuellen UTC-Tages ist noch nicht abgeschlossen.
+    Wir entfernen sie, damit kein Look-ahead durch halbfertige Daten entsteht.
     """
     if os.path.exists(CACHE_PATH) and not force_refresh:
         print(f"Lade Daten aus Cache: {CACHE_PATH}")
         df = pd.read_csv(CACHE_PATH, parse_dates=["date"], index_col="date")
     else:
-        print("Lade Daten frisch von Binance (ccxt) ...")
+        print("Lade Daten frisch von Alpaca (alpaca-py) ...")
         df = fetch_ohlcv_all()
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         df.to_csv(CACHE_PATH)
@@ -128,7 +137,7 @@ def save_state(state):
 
 
 if __name__ == "__main__":
-    print("=== data.py Test ===")
+    print("=== data.py Test (Alpaca BTC/USD) ===")
     df = load_data()
 
     print(f"\nGeladene Tageskerzen: {len(df)}")
@@ -140,7 +149,8 @@ if __name__ == "__main__":
     print("\nLetzte 3 Zeilen:")
     print(df.tail(3))
 
-    # Mini-Plausibilitaet: High muss >= Low sein, keine NaNs in close.
+    # Mini-Plausibilitaet: High >= Low, keine NaNs im close, tz-naiv.
     assert (df["high"] >= df["low"]).all(), "Datenfehler: High < Low gefunden"
     assert df["close"].notna().all(), "Datenfehler: NaN im close"
-    print("\nOK  Plausibilitaet (High>=Low, kein NaN im close) bestanden.")
+    assert df.index.tz is None, "Index muss tz-naiv sein (Projekt-Konvention)"
+    print("\nOK  Plausibilitaet (High>=Low, kein NaN, tz-naiv) bestanden.")

@@ -10,13 +10,35 @@ erst ab Schritt 9 (Live-Betrieb) hier ergaenzt. Bis dahin nutzen die
 Backtest-Module einfaches print().
 """
 
+import os
+
+from dotenv import load_dotenv
+
+# .env laden (API-Keys etc.). Secrets stehen AUSSCHLIESSLICH in .env,
+# niemals hartkodiert im Code. .env bleibt in .gitignore.
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # MARKT / DATEN
 # ---------------------------------------------------------------------------
 
-SYMBOL = "BTC/USDT"          # Handelspaar (erst Spot, spaeter Futures)
+SYMBOL = "BTC/USD"           # Alpaca-Krypto-Spot-Paar (USD, nicht USDT)
 TIMEFRAME = "1d"             # Tageskerzen, UTC-Schluss
-DATA_START = "2017-01-01"    # Historie ab 2017 fuer Backtest + ML-Training
+# Alpacas Krypto-Historie beginnt erst 2021-01-01 (frueher keine Daten).
+DATA_START = "2021-01-01"
+
+# ---------------------------------------------------------------------------
+# ALPACA (Paper-Trading, Spot-only, KEIN Hebel)
+# ---------------------------------------------------------------------------
+# Keys kommen aus .env (python-dotenv). Fehlen sie, bleiben sie None —
+# fuer den Abruf historischer Krypto-Daten sind keine Keys noetig.
+ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+
+# Sicherheitsschalter: fuer diese Abgabe IMMER Paper-Trading (nie live).
+# Wird spaeter explizit an jeden Alpaca-TradingClient uebergeben
+# (TradingClient(..., paper=ALPACA_PAPER)).
+ALPACA_PAPER = os.getenv("ALPACA_PAPER", "True").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # SMA-RICHTUNGSFILTER
@@ -56,8 +78,8 @@ LOWER_PRICE_SMA_FACTOR = 0.99    # LOWER_PRICE = SMA_120 * 0.99 (beim Start)
 UPPER_PRICE_FACTOR = 10          # UPPER_PRICE = aktueller_preis * 10 (theoret. Limit)
 
 # Statischer Fallback fuer das Grid-Spacing (0.5%). Sichert Profit nach
-# ca. 0.2% Maker/Taker-Gebuehren (Binance/Bybit Round-Trip). Im Normal-
-# betrieb wird dieser Wert taeglich vom ML-Modell ueberschrieben.
+# ca. 0.2% Maker/Taker-Gebuehren (Round-Trip, Annahme). Im Normalbetrieb
+# wird dieser Wert taeglich vom ML-Modell ueberschrieben.
 GRID_SPACING_PCT = 0.005
 
 MAX_GRID_COUNT = 200             # Harte Obergrenze fuer die Anzahl Grid-Level
@@ -68,9 +90,11 @@ MAX_GRID_COUNT = 200             # Harte Obergrenze fuer die Anzahl Grid-Level
 # Das ML-Modell sagt direkt ein Spacing in % voraus. Diese Grenzen
 # begrenzen die Vorhersage auf einen sinnvollen Bereich (clip).
 
-# 0.3% reiner Gebuehrenschutz — Binance/Bybit Round-Trip ist 0.2%,
-# minimale Nettomarge. Das Modell entscheidet selbst, ob es hoeher geht.
-ML_SPACING_MIN = 0.003
+# 0.5% harte Untergrenze — bei Alpaca kostet ein Round-Trip 0.4%
+# (0.15% Maker + 0.25% Taker). Ein Spacing unter 0.4% waere strukturell
+# ein Verlustgeschaeft; 0.5% laesst ~0.1% Nettomarge pro Trade. Nie
+# darunter. Das Modell darf nach oben frei entscheiden.
+ML_SPACING_MIN = 0.005
 
 # 5% Soft-Limit nur gegen Ausreisser bei Datenfehlern. Kein harter Clip.
 # Normalbereich: 0.5-2%.
@@ -88,16 +112,12 @@ ML_REBUILD_THRESHOLD = 0.20
 ML_TARGET_FORWARD_DAYS = 3
 
 # ---------------------------------------------------------------------------
-# KAPITAL & HEBEL
+# KAPITAL (Spot-only, KEIN Hebel)
 # ---------------------------------------------------------------------------
 
 CAPITAL_INVESTED = 0.80          # 80% des Kapitals werden im Grid eingesetzt
 CAPITAL_RESERVE = 0.20           # 20% Reserve (Puffer fuer Nachkaeufe/Fees)
-
-# Harte Obergrenze fuer den Hebel. Wird im Spot-Test mit 1 gefahren,
-# spaeter Futures mit MAXIMAL 3x. risk.py muss diesen Wert pruefen und
-# darf ihn NIEMALS ueberschreiten.
-LEVERAGE = 3
+# Kein Hebel/Leverage mehr: reines Spot-Trading ueber Alpaca.
 
 # ---------------------------------------------------------------------------
 # STOP-LOSS / TAKE-PROFIT (Strategie-Ebene)
@@ -112,12 +132,13 @@ TAKE_PROFIT_PCT = None           # z.B. 0.50 fuer +50% — None = deaktiviert
 # ---------------------------------------------------------------------------
 # GEBUEHREN
 # ---------------------------------------------------------------------------
-# Realistische Gebuehren fuer Profitberechnung im Backtest und Live.
-# Binance/Bybit: ca. 0.1% Maker + 0.1% Taker. Ein vollstaendiger
-# Grid-Trade (Buy + Sell) kostet damit rund 0.2% Round-Trip.
-MAKER_FEE = 0.001                # 0.1% pro Maker-Order
-TAKER_FEE = 0.001                # 0.1% pro Taker-Order
-FEE_PER_TRADE = MAKER_FEE + TAKER_FEE   # 0.2% Round-Trip pro Grid-Trade
+# Reale Alpaca-Krypto-Gebuehren (Einstiegsstufe, Volumen < 100k USD).
+# Ein Grid-Round-Trip = Buy (Maker) + Sell (Taker) = 0.15% + 0.25% = 0.4%.
+# Diese 0.4% muss jedes Spacing erst verdienen, bevor Profit entsteht —
+# deshalb liegt ML_SPACING_MIN darueber (siehe oben).
+MAKER_FEE = 0.0015               # 0.15% pro Maker-Order (Alpaca)
+TAKER_FEE = 0.0025               # 0.25% pro Taker-Order (Alpaca)
+FEE_PER_TRADE = MAKER_FEE + TAKER_FEE   # 0.4% Round-Trip pro Grid-Trade
 
 # ---------------------------------------------------------------------------
 # DATEIPFADE
@@ -131,10 +152,11 @@ LOG_PATH = "grid_bot.log"                 # Logdatei (ab Schritt 9)
 # BACKTEST-ZEITRAEUME
 # ---------------------------------------------------------------------------
 
-IN_SAMPLE_START = "2017-01-01"   # Trainings-/In-Sample-Periode
-IN_SAMPLE_END = "2021-12-31"
-OUT_SAMPLE_START = "2022-01-01"  # Out-of-Sample — der entscheidende Vergleich
-OUT_SAMPLE_END = "2024-12-31"
+# Alpaca-Daten ab 2021 -> neue Splits (mit Prof abgestimmt).
+IN_SAMPLE_START = "2021-01-01"   # Trainings-/In-Sample-Periode (3 Jahre)
+IN_SAMPLE_END = "2023-12-31"
+OUT_SAMPLE_START = "2024-01-01"  # Out-of-Sample — der entscheidende Vergleich
+OUT_SAMPLE_END = "2026-07-13"    # bis zum aktuell letzten verfuegbaren Tag
 
 
 # ---------------------------------------------------------------------------
@@ -152,14 +174,15 @@ if __name__ == "__main__":
     print(f"OK  Kapital: {CAPITAL_INVESTED:.0%} investiert + "
           f"{CAPITAL_RESERVE:.0%} Reserve = 100%")
 
-    # Spacing-Untergrenze muss klar ueber den Gebuehren liegen.
-    assert ML_SPACING_MIN > 0.002, \
-        "ML_SPACING_MIN muss groesser als 0.2% (Round-Trip-Gebuehren) sein"
-    print(f"OK  ML_SPACING_MIN = {ML_SPACING_MIN:.3%} > 0.2% Gebuehren")
+    # Spacing-Untergrenze muss klar ueber den Alpaca-Gebuehren liegen.
+    assert ML_SPACING_MIN > FEE_PER_TRADE, \
+        "ML_SPACING_MIN muss groesser als Round-Trip-Gebuehren (0.4%) sein"
+    print(f"OK  ML_SPACING_MIN = {ML_SPACING_MIN:.3%} > "
+          f"{FEE_PER_TRADE:.1%} Alpaca Round-Trip")
 
-    # Hebel-Obergrenze niemals ueberschreiten.
-    assert LEVERAGE <= 3, "LEVERAGE darf 3x niemals ueberschreiten"
-    print(f"OK  LEVERAGE = {LEVERAGE}x (<= 3x)")
+    # Sicherheit: Diese Abgabe laeuft ausschliesslich im Paper-Modus.
+    assert ALPACA_PAPER is True, "ALPACA_PAPER muss True sein (kein Live-Trading)"
+    print(f"OK  ALPACA_PAPER = {ALPACA_PAPER} (Paper-Trading, Spot, kein Hebel)")
 
     # Zusaetzliche Plausibilitaet: Spacing-Grenzen sinnvoll geordnet.
     assert ML_SPACING_MIN < ML_SPACING_MAX, \

@@ -6,6 +6,9 @@ Stop-Loss**. Die Strategie kauft Dips und verkauft Rallyes innerhalb eines
 Grids, fährt aber nur Long, wenn der SMA-Filter einen klaren Aufwärtstrend
 bestätigt — sonst pausiert der Bot.
 
+Daten und Ausführung laufen über **Alpaca** (Krypto-Spot, Paper-Trading).
+Kein Hebel, kein Futures — reines Spot-Trading auf **BTC/USD**.
+
 > Hinweis: Das ML-Modell ist ein **Decision Tree Regressor** (scikit-learn)
 > mit Linear-Regression-Fallback — bewusst erklärbar und schnell trainierbar,
 > keine GPU nötig.
@@ -16,48 +19,67 @@ bestätigt — sonst pausiert der Bot.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # Alpaca Paper-Keys eintragen
 ```
 
 Jedes Modul ist eigenständig ausführbar (Selbsttest im `__main__`-Block), z.B.:
 
 ```bash
 python config.py        # Sanity-Checks der Parameter
-python data.py          # OHLCV-Daten laden
+python data.py          # OHLCV-Daten von Alpaca laden
 python sma_filter.py    # SMA + Entry/Exit/Stop testen
 python ml_spacing.py    # Modell trainieren + Vorhersage
 python backtest.py      # Vollständiger Backtest-Vergleich
+python paper_trade.py   # Paper-Trading-Trockenlauf (Spot, kein Hebel)
 ```
 
 ## Module
 
 | Modul | Beschreibung |
 |---|---|
-| `config.py` | Zentrale Konfiguration: alle Parameter, Grenzen und Gebühren an einem Ort. |
-| `data.py` | Lädt BTC/USDT-Tagesdaten (UTC-Schluss) via ccxt, cacht sie lokal als CSV. |
+| `config.py` | Zentrale Konfiguration: Parameter, Alpaca-Keys (`.env`), Gebühren, Splits. |
+| `data.py` | Lädt BTC/USD-Tagesdaten (UTC-Schluss) via alpaca-py, cacht sie lokal als CSV. |
 | `sma_filter.py` | 120-Tage-SMA, Entry/Exit-Confirmation und dynamischer Stop-Loss (`SMA*0.99`). |
 | `ml_spacing.py` | Feature-Berechnung, Training und Vorhersage des Grid-Spacings in % (`.pkl`). |
+| `grid_logic.py` | Grid-Mechanik: Level, Orders, Fill-Handling, Rebuild (Backtest + Live). |
 | `backtest.py` | Historische Simulation mit OHLC-Fill-Logik: statisch vs. ML vs. Buy&Hold. |
+| `paper_trade.py` | Täglicher Trockenlauf im Paper-Modus (Spot, kein Hebel). |
 
-## Ergebnisse — Out-of-Sample (2022–2024)
+## Gebühren & Spacing
 
-Der entscheidende Vergleich auf ungesehenen Daten (Modell wurde nur auf
-2017–2021 trainiert):
+Alpaca-Krypto-Gebühren (Einstiegsstufe, in `config.py`):
 
-| Strategie | CAGR p.a. | Sharpe | Max-Drawdown |
-|---|---|---|---|
-| Statisch (0.5%) | 16,78 % | 0,89 | −23,18 % |
-| **ML-Spacing** | **19,22 %** | **0,92** | **−22,55 %** |
-| Buy & Hold | 26,40 % | 0,68 | −66,93 % |
+| Order-Typ | Gebühr |
+|---|---|
+| Maker (Limit) | 0,15 % |
+| Taker (Market) | 0,25 % |
+| **Round-Trip** (Buy + Sell) | **0,40 %** |
 
-**Kernaussage:** Buy & Hold erzielt zwar die höchste absolute Rendite, aber um
-den Preis eines verheerenden Drawdowns von −67 %. Der Bot liefert den Großteil
-der Rendite bei rund einem Drittel des Risikos. Das **ML-Spacing schlägt das
-statische Spacing** risikoadjustiert (höherer Sharpe, geringerer Drawdown) bei
-gleichzeitig deutlich weniger Trades und Gebühren.
+Damit jedes Grid-Level nach Gebühren profitabel bleibt, liegt die harte
+Untergrenze für das ML-Spacing bei **`ML_SPACING_MIN = 0,5 %`**
+(≈ 0,1 % Nettomarge pro Round-Trip).
+
+## Ergebnisse — Out-of-Sample (2024–2026)
+
+Der entscheidende Vergleich auf ungesehenen Daten (Modell trainiert nur auf
+2021–2023, Alpaca BTC/USD, realistische Gebühren):
+
+| Strategie | CAGR p.a. | Sharpe | Max-Drawdown | Gebühren |
+|---|---|---|---|---|
+| Statisch (0,5 %) | 9,21 % | 0,63 | −19,31 % | 756 USD |
+| **ML-Spacing** | **13,17 %** | **0,73** | **−17,76 %** | **519 USD** |
+| Buy & Hold | 17,38 % | 0,54 | −53,07 % | 63 USD |
+
+**Kernaussage:** Buy & Hold erzielt die höchste absolute Rendite, aber um den
+Preis eines Drawdowns von −53 %. Der Bot liefert einen Großteil der Rendite bei
+deutlich geringerem Risiko. Das **ML-Spacing schlägt das statische Spacing**
+risikoadjustiert (höherer Sharpe, geringerer Drawdown) bei gleichzeitig ~31 %
+weniger Gebühren und weniger Trades.
 
 ![Equity-Kurve](equity_curve.png)
 
 ## Disclaimer
 
 Dieses Projekt dient ausschließlich Forschungs- und Ausbildungszwecken und ist
-keine Anlageberatung. Handel mit Kryptowährungen ist hochriskant.
+keine Anlageberatung. Handel mit Kryptowährungen ist hochriskant. Für diese
+Abgabe läuft der Bot ausschließlich im **Alpaca Paper-Modus** (`ALPACA_PAPER=True`).

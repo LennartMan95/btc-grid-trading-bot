@@ -13,7 +13,7 @@ fuer den Live-Betrieb. Der gesamte Zustand liegt in EINEM dict ('state'),
 das auch in state.json gesichert werden kann.
 
 Order-Format (einheitlich fuer Buy und Sell):
-  {"price": Level-Preis, "qty": Menge BTC, "cost": Einstandskosten in USDT}
+  {"price": Level-Preis, "qty": Menge BTC, "cost": Einstandskosten in USD}
 """
 
 import config
@@ -23,7 +23,7 @@ def new_state(capital):
     """
     Erzeugt einen frischen, leeren Grid-Zustand.
 
-    Input:  capital (Startkapital in USDT)
+    Input:  capital (Startkapital in USD)
     Output: state-dict mit Cash, leeren Order-Buechern und Zaehlern.
     """
     return {
@@ -305,8 +305,8 @@ if __name__ == "__main__":
           f"(+{state['trades'] - trades_before})")
     assert state["trades"] > trades_before, "Volatiler Tag muss Trades ausloesen"
     assert state["realized"] > 0, "Round-Trips muessen Profit realisieren"
-    print(f"OK  Realisierter Grid-Profit: {state['realized']:.2f} USDT, "
-          f"Gebuehren: {state['fees']:.2f} USDT")
+    print(f"OK  Realisierter Grid-Profit: {state['realized']:.2f} USD, "
+          f"Gebuehren: {state['fees']:.2f} USD")
 
     # Rebuild auf engeres Spacing: Inventar bleibt, keine Liquidation.
     btc_pre = state["btc"]
@@ -320,6 +320,6 @@ if __name__ == "__main__":
     close_grid(state, close=130.0)
     assert state["btc"] == 0.0, "Nach close darf kein BTC mehr gehalten werden"
     assert not state["active"], "Nach close ist das Grid inaktiv"
-    print(f"OK  Grid geschlossen, Endkapital: {state['cash']:.2f} USDT")
+    print(f"OK  Grid geschlossen, Endkapital: {state['cash']:.2f} USD")
 
     print("\nAlle grid_logic-Tests bestanden.")

@@ -141,8 +141,10 @@ def train_model(df, save_path=config.MODEL_PATH):
     X_train, y_train = X[train_mask], y[train_mask]
     X_test, y_test = X[test_mask], y[test_mask]
 
-    print(f"Trainingszeilen (In-Sample 2017-2021):   {len(X_train)}")
-    print(f"Testzeilen     (Out-of-Sample 2022-2024): {len(X_test)}")
+    print(f"Trainingszeilen (In-Sample {config.IN_SAMPLE_START[:4]}-"
+          f"{config.IN_SAMPLE_END[:4]}):   {len(X_train)}")
+    print(f"Testzeilen     (Out-of-Sample {config.OUT_SAMPLE_START[:4]}-"
+          f"{config.OUT_SAMPLE_END[:4]}): {len(X_test)}")
 
     # Primaer: Decision Tree. WARUM diese Hyperparameter:
     #   max_depth=4        -> flach, erklaerbar, kaum Overfitting

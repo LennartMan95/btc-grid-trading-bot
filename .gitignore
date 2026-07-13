@@ -1,6 +1,7 @@
 models/*.pkl
 state.json
 paper_state.json
+data/btc_usdt_1d_binance_backup.csv
 *.log
 __pycache__/
 .env

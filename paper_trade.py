@@ -32,7 +32,7 @@ import grid_logic
 
 # Spot-Modus: ausdruecklich KEIN Hebel. Wir handeln nur eingesetztes Kapital.
 PAPER_LEVERAGE = 1
-PAPER_CAPITAL = 10000.0          # fiktives Startkapital (USDT)
+PAPER_CAPITAL = 10000.0          # fiktives Startkapital (USD)
 PAPER_STATE_PATH = "paper_state.json"
 DEFAULT_DAYS = 60                # wie viele letzte Tage durchgespielt werden
 
@@ -184,10 +184,10 @@ def run_paper(days=DEFAULT_DAYS, verbose=True):
     print("\n--- Paper-Trade Zusammenfassung ---")
     print(f"  Status am Ende:        {'AKTIV' if state['active'] else 'PAUSE'}")
     print(f"  Abgeschlossene Trades: {state['trades']}")
-    print(f"  Realisierter Profit:   {state['realized']:.2f} USDT")
-    print(f"  Gebuehren:             {state['fees']:.2f} USDT")
-    print(f"  Cash / BTC:            {state['cash']:.2f} USDT / {state['btc']:.6f} BTC")
-    print(f"  Equity (Spot):         {equity:.2f} USDT "
+    print(f"  Realisierter Profit:   {state['realized']:.2f} USD")
+    print(f"  Gebuehren:             {state['fees']:.2f} USD")
+    print(f"  Cash / BTC:            {state['cash']:.2f} USD / {state['btc']:.6f} BTC")
+    print(f"  Equity (Spot):         {equity:.2f} USD "
           f"({equity / PAPER_CAPITAL - 1:+.2%})")
     return state
 

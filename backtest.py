@@ -29,7 +29,7 @@ import ml_spacing
 import grid_logic
 
 
-START_CAPITAL = 10000.0   # Startkapital in USDT fuer die Simulation
+START_CAPITAL = 10000.0   # Startkapital in USD fuer die Simulation
 
 # Die gesamte Grid-Mechanik (Level, Orders, Fills, Rebuild) lebt jetzt in
 # grid_logic.py und wird sowohl vom Backtest als auch spaeter vom Live-Bot
@@ -215,19 +215,19 @@ def _empty_state():
 def print_metrics(name, m):
     """Druckt die Kennzahlen eines Backtest-Laufs lesbar untereinander."""
     print(f"\n--- {name} ---")
-    print(f"  Grid-Profit (Periode):     {m['grid_profit']:>12,.2f} USDT")
-    print(f"  Grid-Profit p.a.:          {m['grid_profit_annual']:>12,.2f} USDT "
+    print(f"  Grid-Profit (Periode):     {m['grid_profit']:>12,.2f} USD")
+    print(f"  Grid-Profit p.a.:          {m['grid_profit_annual']:>12,.2f} USD "
           f"({m['grid_profit_pct_annual']:.2%} p.a.)")
-    print(f"  Gesamtprofit (Periode):    {m['total_profit']:>12,.2f} USDT "
+    print(f"  Gesamtprofit (Periode):    {m['total_profit']:>12,.2f} USD "
           f"({m['total_return_pct']:.2%})")
-    print(f"  Gesamtprofit p.a.:         {m['total_profit_annual']:>12,.2f} USDT "
+    print(f"  Gesamtprofit p.a.:         {m['total_profit_annual']:>12,.2f} USD "
           f"({m['total_profit_pct_annual']:.2%} p.a.)")
     print(f"  Rendite p.a. (CAGR):       {m['cagr']:>11.2%}")
-    print(f"  Max-Drawdown:              {m['max_dd_abs']:>12,.2f} USDT "
+    print(f"  Max-Drawdown:              {m['max_dd_abs']:>12,.2f} USD "
           f"({m['max_dd_pct']:.2%})")
     print(f"  Sharpe (annualisiert):     {m['sharpe']:>12.2f}")
     print(f"  Abgeschlossene Trades:     {m['trades']:>12d}")
-    print(f"  Gebuehren gesamt:          {m['fees']:>12,.2f} USDT")
+    print(f"  Gebuehren gesamt:          {m['fees']:>12,.2f} USD")
     print(f"  Stop-Loss-Events:          {m['stop_events']:>12d}")
     print(f"  Rebuilds (nur ML):         {m['rebuilds']:>12d}")
     print(f"  Tage aktiv / gesamt:       {m['days_active']:>6d} / {m['days_total']}")
@@ -243,17 +243,17 @@ def print_table(m_static, m_ml, m_bh, title=""):
     if title:
         print(f"\n{title}")
     rows = [
-        ("Gesamtprofit p.a. (USDT)", "total_profit_annual", "{:>12,.2f}"),
+        ("Gesamtprofit p.a. (USD)", "total_profit_annual", "{:>12,.2f}"),
         ("Gesamtprofit p.a. (%)",    "total_profit_pct_annual", "{:>11.2%}"),
         ("Rendite p.a. CAGR (%)",    "cagr", "{:>11.2%}"),
         ("Gesamtrendite Periode (%)", "total_return_pct", "{:>11.2%}"),
-        ("Grid-Profit p.a. (USDT)",  "grid_profit_annual", "{:>12,.2f}"),
+        ("Grid-Profit p.a. (USD)",  "grid_profit_annual", "{:>12,.2f}"),
         ("Grid-Profit p.a. (%)",     "grid_profit_pct_annual", "{:>11.2%}"),
         ("Max-Drawdown (%)",         "max_dd_pct", "{:>11.2%}"),
-        ("Max-Drawdown (USDT)",      "max_dd_abs", "{:>12,.2f}"),
+        ("Max-Drawdown (USD)",      "max_dd_abs", "{:>12,.2f}"),
         ("Sharpe (annualisiert)",    "sharpe", "{:>12.2f}"),
         ("Abgeschlossene Trades",    "trades", "{:>12d}"),
-        ("Gebuehren gesamt (USDT)",  "fees", "{:>12,.2f}"),
+        ("Gebuehren gesamt (USD)",  "fees", "{:>12,.2f}"),
         ("Stop-Loss-Events",         "stop_events", "{:>12d}"),
     ]
 
@@ -287,7 +287,7 @@ def compare_period(df_full, model, feature_df, start, end, label):
 
     # Direkter Mehrwert-Vergleich (Hauptmetrik: Grid-Profit p.a.).
     diff = m_ml["grid_profit_annual"] - m_static["grid_profit_annual"]
-    print(f"\n  >> ML-Mehrwert Grid-Profit p.a.: {diff:+,.2f} USDT")
+    print(f"\n  >> ML-Mehrwert Grid-Profit p.a.: {diff:+,.2f} USD")
 
     # Regime-Analyse: Anteil aktiver (Bull) vs. pausierter (Baer) Tage.
     share_static = m_static["days_active"] / max(m_static["days_total"], 1)
@@ -316,7 +316,7 @@ def plot_equity(curves, filename="equity_curve.png"):
         plt.plot(series.index, series.values, label=label)
     plt.title("Equity-Kurve: statisch vs. ML-Spacing vs. Buy&Hold")
     plt.xlabel("Datum")
-    plt.ylabel("Equity (USDT)")
+    plt.ylabel("Equity (USD)")
     plt.legend()
     plt.tight_layout()
     plt.savefig(filename, dpi=100)
